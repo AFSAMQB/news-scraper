@@ -38,6 +38,7 @@ HTML = '''
         .input-group input, .input-group select { width:100%; padding:12px 18px; border:2px solid #e0e0e0; border-radius:12px; font-size:0.95rem; outline:none; background:#f8f9ff; color:#1a1a2e; }
         body.dark .input-group input, body.dark .input-group select { background:#0f3460; border-color:#667eea; color:#e0e0e0; }
         .input-group input:focus, .input-group select:focus { border-color:#667eea; box-shadow:0 0 0 3px rgba(102,126,234,0.2); }
+        .input-group small { color:#999; font-size:0.8rem; margin-top:5px; display:block; }
         .quick { display:flex; align-items:center; gap:10px; margin-bottom:20px; flex-wrap:wrap; }
         .quick span { font-weight:600; color:#667eea; }
         .quick button { background:linear-gradient(135deg,#667eea,#764ba2); color:white; border:none; padding:6px 18px; border-radius:20px; cursor:pointer; font-size:0.85rem; font-weight:600; }
@@ -119,7 +120,8 @@ HTML = '''
             </div>
             <div class="input-group">
                 <label><i class="fas fa-search"></i> Filter Headlines</label>
-                <input type="text" id="searchInput" placeholder="Search headlines..." oninput="filterNews()" />
+                <input type="text" id="searchInput" placeholder="e.g. Gaza, Trump, Cricket..." />
+                <small>💡 Type a keyword to filter scraped news by specific topic!</small>
             </div>
             <div class="btns">
                 <button class="btn btn-scrape" onclick="scrapeNews()"><i class="fas fa-spider"></i> Scrape News</button>
@@ -150,13 +152,14 @@ HTML = '''
             const url = document.getElementById("urlInput").value.trim();
             const category = document.getElementById("categoryInput").value;
             const country = document.getElementById("countryInput").value;
+            const keyword = document.getElementById("searchInput").value.trim();
             if (!url) { showError("Please enter a news website URL!"); return; }
             document.getElementById("loading").style.display = "block";
             document.getElementById("results").innerHTML = "";
             document.getElementById("statsBar").style.display = "none";
             document.getElementById("errorMsg").style.display = "none";
             try {
-                const res = await fetch("/scrape", { method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({url, category, country}) });
+                const res = await fetch("/scrape", { method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({url, category, country, keyword}) });
                 const data = await res.json();
                 if (data.error) { showError(data.error); return; }
                 allArticles = data.articles;
@@ -183,10 +186,6 @@ HTML = '''
             document.getElementById("neuCount").textContent = neu;
             document.getElementById("statsBar").style.display = "grid";
         }
-        function filterNews() {
-            const q = document.getElementById("searchInput").value.toLowerCase();
-            displayNews(allArticles.filter(a => a.Headline.toLowerCase().includes(q)));
-        }
         async function downloadCSV() {
             if (!allArticles.length) { showError("Please scrape news first!"); return; }
             const res = await fetch("/download/csv", { method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({articles:allArticles}) });
@@ -206,23 +205,67 @@ HTML = '''
 </html>
 '''
 
-def scrape_news(source_url, category=None, country=None):
+def scrape_news(source_url, category=None, country=None, keyword=None):
     try:
         headers = {"User-Agent": "Mozilla/5.0"}
         response = requests.get(source_url, headers=headers, timeout=10)
         soup = BeautifulSoup(response.text, "html.parser")
         articles = []
+
+        category_keywords = {
+            "Politics": ["government", "president", "election", "minister", "war", "policy", "parliament", "senate", "political", "vote", "democrat", "republican", "prime minister"],
+            "Sports": ["football", "cricket", "match", "player", "tournament", "fifa", "olympic", "championship", "score", "team", "league", "basketball", "tennis"],
+            "Technology": ["technology", "ai", "software", "apple", "google", "microsoft", "robot", "cyber", "internet", "tech", "digital", "data", "app"],
+            "Business": ["market", "economy", "stock", "trade", "bank", "finance", "investment", "company", "billion", "million", "dollar", "gdp", "inflation"],
+            "Health": ["health", "hospital", "disease", "vaccine", "doctor", "medicine", "virus", "cancer", "mental", "covid", "drug", "medical", "patient"],
+            "General": []
+        }
+
+        country_keywords = {
+            "Pakistan": ["pakistan", "islamabad", "karachi", "lahore", "imran", "pti", "nawaz", "punjab", "sindh"],
+            "UK": ["uk", "britain", "london", "british", "england", "scotland", "wales", "boris", "sunak"],
+            "USA": ["usa", "america", "washington", "biden", "trump", "congress", "white house", "american"],
+            "India": ["india", "modi", "delhi", "mumbai", "indian", "hindu", "BJP", "congress"],
+            "Qatar": ["qatar", "doha", "qatari"],
+            "International": []
+        }
+
         for tag in soup.find_all("a", href=True):
             headline = tag.get_text().strip()
             link = tag["href"]
+
             if len(headline) < 20:
                 continue
+
             if link.startswith("/"):
                 from urllib.parse import urlparse
                 base = urlparse(source_url)
                 link = f"{base.scheme}://{base.netloc}{link}"
+
+            headline_lower = headline.lower()
+
+            # Filter by keyword first (most specific)
+            if keyword and keyword.lower() not in headline_lower:
+                continue
+
+            # Filter by category
+            category_match = True
+            if category and category != "General":
+                keywords = category_keywords.get(category, [])
+                category_match = any(word in headline_lower for word in keywords)
+
+            # Filter by country
+            country_match = True
+            if country and country != "International":
+                keywords = country_keywords.get(country, [])
+                country_match = any(word in headline_lower for word in keywords)
+
+            if not category_match and not country_match:
+                continue
+
             score = TextBlob(headline).sentiment.polarity
             sentiment = "Positive 😊" if score > 0 else "Negative 😟" if score < 0 else "Neutral 😐"
+
             articles.append({
                 "Headline": headline,
                 "Link": link,
@@ -232,7 +275,9 @@ def scrape_news(source_url, category=None, country=None):
                 "Category": category or "General",
                 "Country": country or "International"
             })
+
         return articles[:50]
+
     except:
         return []
 
@@ -246,11 +291,12 @@ def scrape():
     url = data.get("url")
     category = data.get("category")
     country = data.get("country")
+    keyword = data.get("keyword", "")
     if not url:
         return jsonify({"error": "Please enter a URL!"}), 400
-    articles = scrape_news(url, category, country)
+    articles = scrape_news(url, category, country, keyword)
     if not articles:
-        return jsonify({"error": "No articles found! Try another URL."}), 404
+        return jsonify({"error": "No articles found! Try another URL or keyword."}), 404
     return jsonify({"articles": articles, "total": len(articles)})
 
 @app.route("/download/csv", methods=["POST"])

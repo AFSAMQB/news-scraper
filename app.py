@@ -2,7 +2,7 @@ from flask import Flask, render_template_string, request, jsonify, send_file
 import requests
 from bs4 import BeautifulSoup
 from textblob import TextBlob
-from datetime import datetime
+from datetime import datetime, timedelta
 import pandas as pd
 import io
 
@@ -69,6 +69,7 @@ HTML = '''
         .news-card a:hover { text-decoration:underline; }
         .badge { padding:6px 14px; border-radius:20px; font-size:0.8rem; font-weight:700; white-space:nowrap; }
         .badge.pos { background:#e8fff4; color:#11998e; } .badge.neg { background:#fff0f3; color:#f5576c; } .badge.neu { background:#fffbea; color:#f0a500; }
+        .url-hint { font-size:0.8rem; color:#667eea; margin-top:5px; display:block; font-style:italic; }
         @media(max-width:600px) { .row { grid-template-columns:1fr; } .stats { grid-template-columns:repeat(2,1fr); } .hero h1 { font-size:1.8rem; } .btns { flex-direction:column; } }
     </style>
 </head>
@@ -86,24 +87,25 @@ HTML = '''
             <div class="input-group">
                 <label><i class="fas fa-link"></i> News Website URL</label>
                 <input type="text" id="urlInput" placeholder="https://www.bbc.com/news" />
+                <small class="url-hint" id="urlHint">💡 URL auto-updates when you select a category!</small>
             </div>
             <div class="quick">
                 <span>Quick Select:</span>
                 <button onclick="setURL('https://www.bbc.com/news')">BBC</button>
-                <button onclick="setURL('https://www.reuters.com')">Reuters</button>
                 <button onclick="setURL('https://www.aljazeera.com')">Al Jazeera</button>
                 <button onclick="setURL('https://www.dawn.com')">Dawn</button>
+                <button onclick="setURL('https://www.theguardian.com')">Guardian</button>
             </div>
             <div class="row">
                 <div class="input-group">
                     <label><i class="fas fa-newspaper"></i> Category</label>
-                    <select id="categoryInput">
-                        <option>General</option>
-                        <option>Politics</option>
-                        <option>Sports</option>
-                        <option>Technology</option>
-                        <option>Business</option>
-                        <option>Health</option>
+                    <select id="categoryInput" onchange="updateURL()">
+                        <option value="General">General</option>
+                        <option value="Politics">Politics</option>
+                        <option value="Sports">Sports</option>
+                        <option value="Technology">Technology</option>
+                        <option value="Business">Business</option>
+                        <option value="Health">Health</option>
                     </select>
                 </div>
                 <div class="input-group">
@@ -115,6 +117,24 @@ HTML = '''
                         <option>USA</option>
                         <option>India</option>
                         <option>Qatar</option>
+                    </select>
+                </div>
+            </div>
+            <div class="row">
+                <div class="input-group">
+                    <label><i class="fas fa-calendar"></i> Date</label>
+                    <select id="dateInput">
+                        <option value="today">Today</option>
+                        <option value="yesterday">Yesterday</option>
+                    </select>
+                </div>
+                <div class="input-group">
+                    <label><i class="fas fa-clock"></i> Time Range</label>
+                    <select id="timeInput">
+                        <option value="all">All Day</option>
+                        <option value="morning">Morning (6AM - 12PM)</option>
+                        <option value="afternoon">Afternoon (12PM - 6PM)</option>
+                        <option value="evening">Evening (6PM - 12AM)</option>
                     </select>
                 </div>
             </div>
@@ -141,25 +161,86 @@ HTML = '''
     </div>
     <script>
         let allArticles = [];
-        function setURL(url) { document.getElementById("urlInput").value = url; }
+
+        const categoryUrls = {
+            "bbc.com": {
+                "General":    "https://www.bbc.com/news",
+                "Politics":   "https://www.bbc.com/news/politics",
+                "Sports":     "https://www.bbc.com/sport",
+                "Technology": "https://www.bbc.com/innovation",
+                "Business":   "https://www.bbc.com/business",
+                "Health":     "https://www.bbc.com/news/health"
+            },
+            "aljazeera.com": {
+                "General":    "https://www.aljazeera.com",
+                "Politics":   "https://www.aljazeera.com/news",
+                "Sports":     "https://www.aljazeera.com/sports",
+                "Technology": "https://www.aljazeera.com/news",
+                "Business":   "https://www.aljazeera.com/economy",
+                "Health":     "https://www.aljazeera.com/health"
+            },
+            "dawn.com": {
+                "General":    "https://www.dawn.com",
+                "Politics":   "https://www.dawn.com/politics",
+                "Sports":     "https://www.dawn.com/sport",
+                "Technology": "https://www.dawn.com/technology",
+                "Business":   "https://www.dawn.com/business",
+                "Health":     "https://www.dawn.com"
+            },
+            "theguardian.com": {
+                "General":    "https://www.theguardian.com",
+                "Politics":   "https://www.theguardian.com/politics",
+                "Sports":     "https://www.theguardian.com/sport",
+                "Technology": "https://www.theguardian.com/technology",
+                "Business":   "https://www.theguardian.com/business",
+                "Health":     "https://www.theguardian.com/society/health"
+            }
+        };
+
+        function setURL(url) {
+            document.getElementById("urlInput").value = url;
+            updateURL();
+        }
+
+        function updateURL() {
+            const url = document.getElementById("urlInput").value.trim();
+            const category = document.getElementById("categoryInput").value;
+            for (const domain in categoryUrls) {
+                if (url.includes(domain)) {
+                    const newUrl = categoryUrls[domain][category] || url;
+                    document.getElementById("urlInput").value = newUrl;
+                    document.getElementById("urlHint").textContent = "✅ URL auto-updated for " + category + " on " + domain + "!";
+                    return;
+                }
+            }
+            document.getElementById("urlHint").textContent = "💡 URL auto-updates when you select a category!";
+        }
+
         function toggleTheme() {
             document.body.classList.toggle("dark");
             document.body.classList.toggle("light");
             const btn = document.querySelector("nav button");
             btn.textContent = document.body.classList.contains("dark") ? "☀️ Light Mode" : "🌙 Dark Mode";
         }
+
         async function scrapeNews() {
             const url = document.getElementById("urlInput").value.trim();
             const category = document.getElementById("categoryInput").value;
             const country = document.getElementById("countryInput").value;
             const keyword = document.getElementById("searchInput").value.trim();
+            const date = document.getElementById("dateInput").value;
+            const timeRange = document.getElementById("timeInput").value;
             if (!url) { showError("Please enter a news website URL!"); return; }
             document.getElementById("loading").style.display = "block";
             document.getElementById("results").innerHTML = "";
             document.getElementById("statsBar").style.display = "none";
             document.getElementById("errorMsg").style.display = "none";
             try {
-                const res = await fetch("/scrape", { method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({url, category, country, keyword}) });
+                const res = await fetch("/scrape", {
+                    method: "POST",
+                    headers: {"Content-Type": "application/json"},
+                    body: JSON.stringify({url, category, country, keyword, date, timeRange})
+                });
                 const data = await res.json();
                 if (data.error) { showError(data.error); return; }
                 allArticles = data.articles;
@@ -168,14 +249,26 @@ HTML = '''
             } catch(e) { showError("Something went wrong! Please try again."); }
             finally { document.getElementById("loading").style.display = "none"; }
         }
+
         function displayNews(articles) {
             const results = document.getElementById("results");
-            if (!articles.length) { results.innerHTML = '<div style="text-align:center;padding:40px;opacity:0.6;"><i class="fas fa-newspaper" style="font-size:3rem;"></i><p style="margin-top:15px;">No articles found!</p></div>'; return; }
+            if (!articles.length) {
+                results.innerHTML = '<div style="text-align:center;padding:40px;opacity:0.6;"><i class="fas fa-newspaper" style="font-size:3rem;"></i><p style="margin-top:15px;">No articles found! Try changing filters.</p></div>';
+                return;
+            }
             results.innerHTML = articles.map((a,i) => {
                 const c = a.Sentiment.includes("Positive") ? "pos" : a.Sentiment.includes("Negative") ? "neg" : "neu";
-                return `<div class="news-card ${c}"><div><h3>${i+1}. ${a.Headline}</h3><a href="${a.Link}" target="_blank"><i class="fas fa-external-link-alt"></i> Read Full Article</a><span style="margin-left:15px;font-size:0.8rem;opacity:0.6;">📅 ${a.Date} ⏰ ${a.Time} 🌍 ${a.Country} 📰 ${a.Category}</span></div><span class="badge ${c}">${a.Sentiment}</span></div>`;
+                return `<div class="news-card ${c}">
+                    <div>
+                        <h3>${i+1}. ${a.Headline}</h3>
+                        <a href="${a.Link}" target="_blank"><i class="fas fa-external-link-alt"></i> Read Full Article</a>
+                        <span style="margin-left:15px;font-size:0.8rem;opacity:0.6;">📅 ${a.Date} ⏰ ${a.Time} 🌍 ${a.Country} 📰 ${a.Category}</span>
+                    </div>
+                    <span class="badge ${c}">${a.Sentiment}</span>
+                </div>`;
             }).join("");
         }
+
         function updateStats(articles) {
             const pos = articles.filter(a => a.Sentiment.includes("Positive")).length;
             const neg = articles.filter(a => a.Sentiment.includes("Negative")).length;
@@ -186,14 +279,20 @@ HTML = '''
             document.getElementById("neuCount").textContent = neu;
             document.getElementById("statsBar").style.display = "grid";
         }
+
         async function downloadCSV() {
             if (!allArticles.length) { showError("Please scrape news first!"); return; }
-            const res = await fetch("/download/csv", { method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({articles:allArticles}) });
+            const res = await fetch("/download/csv", {
+                method: "POST",
+                headers: {"Content-Type": "application/json"},
+                body: JSON.stringify({articles: allArticles})
+            });
             const blob = await res.blob();
             const url = window.URL.createObjectURL(blob);
             const a = document.createElement("a");
             a.href = url; a.download = "news.csv"; a.click();
         }
+
         function showError(msg) {
             const err = document.getElementById("errorMsg");
             err.textContent = "❌ " + msg;
@@ -205,7 +304,7 @@ HTML = '''
 </html>
 '''
 
-def scrape_news(source_url, category=None, country=None, keyword=None):
+def scrape_news(source_url, category=None, country=None, keyword=None, date="today", timeRange="all"):
     try:
         headers = {"User-Agent": "Mozilla/5.0"}
         response = requests.get(source_url, headers=headers, timeout=10)
@@ -230,6 +329,24 @@ def scrape_news(source_url, category=None, country=None, keyword=None):
             "International": []
         }
 
+        known_domains = ["bbc.com", "aljazeera.com", "dawn.com", "theguardian.com"]
+        is_known_domain = any(domain in source_url for domain in known_domains)
+
+        # Date logic
+        if date == "today":
+            article_date = datetime.now().strftime("%Y-%m-%d")
+        else:
+            article_date = (datetime.now() - timedelta(days=1)).strftime("%Y-%m-%d")
+
+        # Time range logic
+        current_hour = datetime.now().hour
+        if timeRange == "morning" and not (6 <= current_hour < 12):
+            return []
+        elif timeRange == "afternoon" and not (12 <= current_hour < 18):
+            return []
+        elif timeRange == "evening" and not (18 <= current_hour < 24):
+            return []
+
         for tag in soup.find_all("a", href=True):
             headline = tag.get_text().strip()
             link = tag["href"]
@@ -244,13 +361,13 @@ def scrape_news(source_url, category=None, country=None, keyword=None):
 
             headline_lower = headline.lower()
 
-            # Filter by keyword first (most specific)
+            # Filter by keyword
             if keyword and keyword.lower() not in headline_lower:
                 continue
 
-            # Filter by category
+            # Skip category keyword filter for known domains (URL handles it)
             category_match = True
-            if category and category != "General":
+            if category and category != "General" and not is_known_domain:
                 keywords = category_keywords.get(category, [])
                 category_match = any(word in headline_lower for word in keywords)
 
@@ -270,7 +387,7 @@ def scrape_news(source_url, category=None, country=None, keyword=None):
                 "Headline": headline,
                 "Link": link,
                 "Sentiment": sentiment,
-                "Date": datetime.now().strftime("%Y-%m-%d"),
+                "Date": article_date,
                 "Time": datetime.now().strftime("%H:%M"),
                 "Category": category or "General",
                 "Country": country or "International"
@@ -292,11 +409,13 @@ def scrape():
     category = data.get("category")
     country = data.get("country")
     keyword = data.get("keyword", "")
+    date = data.get("date", "today")
+    timeRange = data.get("timeRange", "all")
     if not url:
         return jsonify({"error": "Please enter a URL!"}), 400
-    articles = scrape_news(url, category, country, keyword)
+    articles = scrape_news(url, category, country, keyword, date, timeRange)
     if not articles:
-        return jsonify({"error": "No articles found! Try another URL or keyword."}), 404
+        return jsonify({"error": "No articles found! Try changing filters or URL."}), 404
     return jsonify({"articles": articles, "total": len(articles)})
 
 @app.route("/download/csv", methods=["POST"])

@@ -1,0 +1,4 @@
+My name is John
+This is line 2
+Python rocks! 🎉
+Special chars: café, ñ, 中文
